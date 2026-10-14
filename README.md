@@ -78,7 +78,7 @@ cat /etc/bind/named.conf.local
 
 ![2](image/SS11-02-konfigurasi-master.png)
 
-### B. DNS Slave — Shoko
+#### B. DNS Slave — Shoko
 
 Konfigurasi di `/etc/bind/named.conf.local`:
 
@@ -107,7 +107,7 @@ ls -lh /var/cache/bind/
 ![3](image/SS11-03-konfigurasi-slave.png) <br>
 ![4](image/SS11-04-file-zona-slave.png)
 
-### C. Pengujian sinkronisasi serial
+#### C. Pengujian sinkronisasi serial
 
 Di Utahime, periksa serial awal:
 
@@ -148,7 +148,7 @@ dig @192.229.1.3 jujutsu.k-36.com SOA +noall +answer
 
 ![7](image/SS11-07-sinkronisasi-slave.png)
 
-### D. Pengujian dari client
+#### D. Pengujian dari client
 
 Dari client yang sudah terhubung ke jaringan, jalankan:
 
@@ -161,12 +161,12 @@ dig @192.229.1.3 jujutsu.k-36.com SOA +noall +answer
 
 ![8](image/SS11-08-query-dari-client.png)
 
-## 4. Hasil dan Analisis
+### Hasil dan Analisis
 
 Konfigurasi dinyatakan berhasil apabila Utahime dapat melayani zona `jujutsu.k-36.com`, Shoko menerima file zona melalui transfer DNS, dan serial pada kedua server sama setelah pembaruan. Query `dig` dari client juga harus berhasil pada kedua server.
 
 Jika file zona belum tersedia atau serial Shoko belum berubah, periksa log BIND dan aturan `allow-transfer` sebelum menyatakan pengujian berhasil.
 
-## 5. Kesimpulan
+### Kesimpulan
 
 Pada praktikum ini, Utahime dikonfigurasi sebagai DNS Master dan Shoko sebagai DNS Slave. Record SOA dan NS digunakan untuk mendefinisikan zona, sedangkan `allow-transfer` membatasi penerima transfer zona. Keberhasilan sinkronisasi dibuktikan dengan kesamaan serial SOA setelah pembaruan dan keberhasilan query DNS dari client.
