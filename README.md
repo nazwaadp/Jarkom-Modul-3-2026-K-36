@@ -191,21 +191,19 @@ Peta domain harus memetakan pintu masuk utama dan tetap bisa mencari alamat di l
 | Domain | `jujutsu.k-36.com` |
 | Utahime (DNS Master) | `192.229.1.2` |
 | Shoko (DNS Slave) | `192.229.1.3` |
-| Gojo (sesuai konfigurasi script; verifikasi dengan Master Sheet) | `192.229.1.4` |
+| Gojo | `192.229.1.4` |
 | DNS Forwarder | `192.168.122.1` |
 | Reverse zone | `1.229.192.in-addr.arpa` |
-
-> Pastikan IP Gojo `192.229.1.4` sesuai tabel alokasi IP kelompok. Jika berbeda, sesuaikan `GOJO_IP` dan record PTR sebelum menjalankan script.
 
 ### Langkah pengerjaan
 
 #### A. Utahime — DNS Master
 
-Salin script `soal-12-utahime.sh` ke `/root/` pada node Utahime, kemudian jalankan:
+Salin script `soal-12.sh` ke `/root/` pada node Utahime, kemudian jalankan:
 
 ```bash
-chmod +x /root/soal-12-utahime.sh
-/root/soal-12-utahime.sh
+chmod +x /root/soal-12.sh
+/root/soal-12.sh
 ```
 
 Script mengatur DNS forwarder ke `192.168.122.1`, mendeklarasikan forward zone dan reverse zone, membuat A record untuk domain utama, CNAME `www`, dan record PTR untuk IP Gojo. Script lalu memvalidasi konfigurasi dan menampilkan hasil query awal.
@@ -222,11 +220,11 @@ named-checkzone 1.229.192.in-addr.arpa /etc/bind/db.192.229.1
 
 #### B. Shoko — DNS Slave
 
-Setelah Utahime berhasil, salin `soal-12-shoko.sh` ke `/root/` pada node Shoko, kemudian jalankan:
+Setelah Utahime berhasil, salin `soal-12.sh` ke `/root/` pada node Shoko, kemudian jalankan:
 
 ```bash
-chmod +x /root/soal-12-shoko.sh
-/root/soal-12-shoko.sh
+chmod +x /root/soal-12.sh
+/root/soal-12.sh
 ```
 
 Script mengatur forward zone dan reverse zone sebagai Slave dengan Utahime (`192.229.1.2`) sebagai Master, lalu mengaktifkan konfigurasi DNS forwarder. File zona Slave diharapkan diterima melalui zone transfer dan berada di `/var/cache/bind/`.
@@ -248,7 +246,7 @@ Jalankan tes berikut pada client yang sudah memiliki IPv4, gateway, dan koneksi 
 dig @192.229.1.2 jujutsu.k-36.com A +noall +answer
 ```
 
-Expected: record A mengembalikan IP Gojo, yaitu `192.229.1.4` jika sesuai tabel IP kelompok.
+Expected: record A mengembalikan IP Gojo, yaitu `192.229.1.4`.
 
 **CNAME `www`:**
 
@@ -284,7 +282,6 @@ Expected: query `google.com` mengembalikan satu atau lebih alamat IP. Ping harus
 Perintah:
 
 ```bash
-clear
 hostname
 named-checkconf -z
 named-checkzone jujutsu.k-36.com /etc/bind/db.jujutsu.k-36.com
@@ -301,7 +298,6 @@ Expected: kedua zona valid dengan hasil `OK`; forwarder menunjukkan `192.168.122
 **Node:** client yang sudah terkoneksi. Screenshot harus menampilkan hasil ketiga query berikut.
 
 ```bash
-clear
 hostname
 dig @192.229.1.2 jujutsu.k-36.com A +noall +answer
 dig @192.229.1.2 www.jujutsu.k-36.com CNAME +noall +answer
@@ -330,4 +326,107 @@ Expected: query DNS mengembalikan alamat IP. Ping melakukan resolusi nama; balas
 A record memetakan domain utama ke IP Gojo, CNAME menjadikan `www` alias dari domain utama, dan PTR memungkinkan pencarian balik dari IP Gojo ke nama domain. DNS forwarder meneruskan query eksternal ke `192.168.122.1`.
 
 Soal dinyatakan berhasil apabila validasi forward dan reverse zone tidak menunjukkan error, ketiga query A/CNAME/PTR mengembalikan record yang diharapkan, serta query `google.com` melalui Utahime berhasil. Pengujian dari client harus dilakukan setelah konektivitas client ke DNS berfungsi. Cantumkan hasil aktual dan jangan menyatakan pengujian sukses apabila output belum sesuai expected.
+
+## Soal 13 — MariaDB Master dan Slave
+
+Kepala Sekolah Yaga dan Inumaki mendirikan database terpusat yang redundan agar log aktivitas kutukan tetap aman tersimpan. Konfigurasikan MariaDB pada **yaga** sebagai **DB-Master** dan **inumaki** sebagai **DB-Slave**. Buat database `db_shibuya_<xxxx>` beserta tabel `request_logs` di Master, aktifkan binary logging (`log-bin`, `server-id`), lalu hubungkan Inumaki sebagai Slave yang menyalin data secara realtime dengan `CHANGE MASTER TO`. Berikan hak akses remote bagi seluruh node di Network 4, lalu buktikan replikasi berhasil dengan memasukkan data baru di Master dan memeriksa hasilnya di Slave.
+
+### Tujuan
+
+- Menyiapkan Yaga sebagai MariaDB Master dan Inumaki sebagai MariaDB Slave.
+- Membuat database `db_shibuya_K36` dan tabel `request_logs`.
+- Mengaktifkan binary logging dan menetapkan `server-id` yang unik.
+- Memberikan hak remote untuk node Network 4 dan hak replikasi bagi Inumaki.
+- Membuktikan replikasi melalui status Slave dan pengujian data baru.
+
+### Informasi Node
+
+| Komponen | Nilai |
+|---|---|
+| Kelompok | K-36 |
+| Yaga (Master) | `192.229.4.17` |
+| Inumaki (Slave) | `192.229.4.18` |
+| Database | `db_shibuya_K36` |
+| Tabel | `request_logs` |
+| Master `server-id` | `1` |
+| Slave `server-id` | `2` |
+| User replikasi | `repl` |
+| User aplikasi remote | `k36user` |
+
+### Langkah Pengerjaan
+
+#### A. Konfigurasi Master — Yaga
+
+Simpan script `soal-13.sh` di `/root` pada node Yaga, lalu jalankan:
+
+```bash
+chmod +x /root/soal-13.sh
+/root/soal-13.sh
+```
+
+Script memasang MariaDB jika belum ada, menyiapkan konfigurasi `bind-address = 0.0.0.0`, `server-id = 1`, `log_bin`, dan `binlog_format = ROW`. Script juga membuat database `db_shibuya_K36`, tabel `request_logs`, user replikasi `repl`, dan user remote `k36user` yang dibatasi untuk host Network 4 (`192.229.4.%`).
+
+Validasi di Yaga:
+
+```bash
+mysql -e "SHOW GLOBAL VARIABLES WHERE Variable_name IN ('server_id','log_bin','bind_address','binlog_format');"
+mysql -e "SHOW MASTER STATUS\\G"
+mysql -e "SHOW DATABASES LIKE 'db_shibuya_K36'; USE db_shibuya_K36; DESCRIBE request_logs;"
+mysql -e "SELECT User, Host FROM mysql.user WHERE User IN ('repl','k36user');"
+```
+
+**Expected:** `server_id` bernilai `1`, `log_bin` bernilai `ON`, `bind_address` bernilai `0.0.0.0`, `SHOW MASTER STATUS` menampilkan file dan posisi binary log, dan tabel `request_logs` tersedia.
+
+![1](image/SS13-01-validasi-master-yaga.png) <br>
+![2](image/SS13-02-database-user-yaga.png)
+
+#### B. Konfigurasi Slave — Inumaki
+
+Jalankan script Yaga sampai selesai terlebih dahulu. Setelah itu, simpan `soal-13.sh` di `/root` pada node Inumaki, lalu jalankan:
+
+```bash
+chmod +x /root/soal-13.sh
+/root/soal-13.sh
+```
+
+Script memasang MariaDB jika diperlukan, menetapkan `server-id = 2`, mengaktifkan `relay_log`, mengatur `read_only = 1`, membuat schema dan tabel lokal yang sesuai, mengambil posisi binary log dari Master, lalu mengatur replikasi menggunakan `CHANGE MASTER TO` dengan `MASTER_LOG_FILE` dan `MASTER_LOG_POS`.
+
+Validasi status replikasi di Inumaki:
+
+```bash
+mysql -e "SHOW SLAVE STATUS\\G" | grep -E 'Master_Host:|Master_User:|Master_Log_File:|Read_Master_Log_Pos:|Slave_IO_Running:|Slave_SQL_Running:|Seconds_Behind_Master:|Last_IO_Error:|Last_SQL_Error:'
+```
+
+**Expected:** `Master_Host` adalah `192.229.4.17`, `Slave_IO_Running: Yes`, `Slave_SQL_Running: Yes`, dan tidak ada pesan error pada `Last_IO_Error` maupun `Last_SQL_Error`. `Seconds_Behind_Master` umumnya `0` atau mendekati `0` saat tidak ada antrean.
+
+![3](image/SS13-03-status-slave-inumaki.png)
+
+#### C. Uji replikasi data
+
+Lakukan pengujian dari Inumaki. Perintah pertama mengirim `INSERT` melalui koneksi remote ke Yaga menggunakan user aplikasi, kemudian perintah kedua memeriksa apakah baris yang sama sudah muncul pada database lokal Inumaki.
+
+```bash
+MYSQL_PWD='K36_pass' mysql --protocol=tcp -h 192.229.4.17 -uk36user db_shibuya_K36 -e "INSERT INTO request_logs(worker,client_ip,request_path) VALUES ('soal13-test','192.229.4.18','/soal13-replication-test'); SELECT id,worker,client_ip,request_path,created_at FROM request_logs WHERE request_path='/soal13-replication-test' ORDER BY id DESC LIMIT 1;"
+
+sleep 2
+mysql -e "SELECT id,worker,client_ip,request_path,created_at FROM db_shibuya_K36.request_logs WHERE request_path='/soal13-replication-test' ORDER BY id DESC LIMIT 5;"
+```
+
+**Expected:** perintah pertama menampilkan baris yang baru dimasukkan ke Master. Setelah replikasi diproses, query lokal pada Inumaki menampilkan baris dengan `worker = soal13-test` dan `request_path = /soal13-replication-test`.
+
+Jika baris belum muncul, jalankan `SHOW SLAVE STATUS\\G` dan periksa `Last_IO_Error` serta `Last_SQL_Error`; jangan menyimpulkan replikasi berhasil sebelum data tampak pada Slave.
+
+![4](image/SS13-04-uji-replikasi-data.png)
+
+### Analisis
+
+Yaga bertindak sebagai sumber utama data. Binary logging merekam perubahan yang terjadi pada Master, sedangkan Inumaki menggunakan konfigurasi replikasi untuk membaca dan menerapkan perubahan tersebut. `server-id` dibuat berbeda (`1` pada Yaga dan `2` pada Inumaki) agar kedua server dapat dibedakan dalam topologi replikasi.
+
+User `repl` diberi hak replikasi dari Network 4, sedangkan `k36user` diberi akses ke database `db_shibuya_K36` dari alamat dalam subnet `192.229.4.0/24`. Replikasi dinyatakan berhasil jika kedua thread Slave berstatus `Yes` dan data uji yang dimasukkan melalui Master akhirnya dapat dibaca di Slave.
+
+Script menggunakan posisi file dan posisi binary log dari `SHOW MASTER STATUS` pada `CHANGE MASTER TO`. Karena posisi diambil setelah schema awal disiapkan, script juga memastikan database dan tabel yang sama tersedia pada Inumaki sebelum replikasi dimulai.
+
+### Kesimpulan
+
+MariaDB pada Yaga dikonfigurasi sebagai Master dengan binary logging, database `db_shibuya_K36`, dan tabel `request_logs`. Inumaki dikonfigurasi sebagai Slave dengan `server-id` yang berbeda dan relay log. Keberhasilan dibuktikan melalui status replikasi `Slave_IO_Running: Yes` dan `Slave_SQL_Running: Yes`, serta data uji yang dimasukkan pada Master dan muncul pada Slave.
 
