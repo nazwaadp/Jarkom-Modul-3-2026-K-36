@@ -185,15 +185,15 @@ Peta domain harus memetakan pintu masuk utama dan tetap bisa mencari alamat di l
 
 ### Informasi konfigurasi
 
-| Komponen | Nilai |
-|---|---|
-| Kelompok | K-36 |
-| Domain | `jujutsu.k-36.com` |
-| Utahime (DNS Master) | `192.229.1.2` |
-| Shoko (DNS Slave) | `192.229.1.3` |
-| Gojo | `192.229.1.4` |
-| DNS Forwarder | `192.168.122.1` |
-| Reverse zone | `1.229.192.in-addr.arpa` |
+| Komponen             | Nilai                    |
+| -------------------- | ------------------------ |
+| Kelompok             | K-36                     |
+| Domain               | `jujutsu.k-36.com`       |
+| Utahime (DNS Master) | `192.229.1.2`            |
+| Shoko (DNS Slave)    | `192.229.1.3`            |
+| Gojo                 | `192.229.1.4`            |
+| DNS Forwarder        | `192.168.122.1`          |
+| Reverse zone         | `1.229.192.in-addr.arpa` |
 
 ### Langkah pengerjaan
 
@@ -341,17 +341,17 @@ Kepala Sekolah Yaga dan Inumaki mendirikan database terpusat yang redundan agar 
 
 ### Informasi Node
 
-| Komponen | Nilai |
-|---|---|
-| Kelompok | K-36 |
-| Yaga (Master) | `192.229.4.17` |
-| Inumaki (Slave) | `192.229.4.18` |
-| Database | `db_shibuya_K36` |
-| Tabel | `request_logs` |
-| Master `server-id` | `1` |
-| Slave `server-id` | `2` |
-| User replikasi | `repl` |
-| User aplikasi remote | `k36user` |
+| Komponen             | Nilai            |
+| -------------------- | ---------------- |
+| Kelompok             | K-36             |
+| Yaga (Master)        | `192.229.4.17`   |
+| Inumaki (Slave)      | `192.229.4.18`   |
+| Database             | `db_shibuya_K36` |
+| Tabel                | `request_logs`   |
+| Master `server-id`   | `1`              |
+| Slave `server-id`    | `2`              |
+| User replikasi       | `repl`           |
+| User aplikasi remote | `k36user`        |
 
 ### Langkah Pengerjaan
 
@@ -430,3 +430,207 @@ Script menggunakan posisi file dan posisi binary log dari `SHOW MASTER STATUS` p
 
 MariaDB pada Yaga dikonfigurasi sebagai Master dengan binary logging, database `db_shibuya_K36`, dan tabel `request_logs`. Inumaki dikonfigurasi sebagai Slave dengan `server-id` yang berbeda dan relay log. Keberhasilan dibuktikan melalui status replikasi `Slave_IO_Running: Yes` dan `Slave_SQL_Running: Yes`, serta data uji yang dimasukkan pada Master dan muncul pada Slave.
 
+## Soal 14 — Frontend dan API Worker dengan Nginx, PHP-FPM, dan MariaDB
+
+Para penyihir lapangan bersiaga di Data Center sebagai pekerja backend untuk memproses aplikasi. Pasang Nginx dan PHP-FPM pada **maki** dan **panda** untuk menyajikan web frontend yang menampilkan hostname masing-masing. Pada **nanami**, **todo**, dan **kirara**, siapkan layanan API yang mencatat log request ke database **yaga**. Konfigurasikan virtual host agar worker merespons domain layanan yang ditentukan. Batasi akses langsung dari klien ke worker, web worker hanya menerima trafik melalui jalur proxy web yang ditentukan, sedangkan worker API hanya menerima trafik melalui **geto**. Uji bahwa akses langsung dari klien ditolak, sementara akses melalui reverse proxy tetap berhasil.
+
+### Tujuan
+
+- Memasang Nginx dan PHP-FPM pada Maki serta Panda untuk frontend yang menampilkan hostname worker.
+- Membuat API di Nanami, Todo, dan Kirara yang mencatat request ke `yaga`.
+- Menyediakan virtual host untuk `jujutsu.k-36.com` dan `www.jujutsu.k-36.com`.
+- Membatasi frontend agar hanya menerima trafik dari Gojo (`192.229.1.4`) dan API dari Geto (`192.229.4.11`), dengan localhost diizinkan untuk self-test.
+- Membuktikan akses langsung dari client ditolak dan jalur melalui proxy berhasil.
+
+### Node dan konfigurasi
+
+| Node                 | Fungsi          | Nilai penting                                                   |
+| -------------------- | --------------- | --------------------------------------------------------------- |
+| Maki, Panda          | Frontend worker | Allowed proxy: Gojo `192.229.1.4`                               |
+| Nanami, Todo, Kirara | API worker      | Allowed proxy: Geto `192.229.4.11`                              |
+| Yaga                 | MariaDB         | `192.229.4.17`, database `db_shibuya_K36`, tabel `request_logs` |
+| Virtual host         | Domain layanan  | `jujutsu.k-36.com`, `www.jujutsu.k-36.com`                      |
+
+### Prasyarat
+
+1. Soal 13 di Yaga telah berhasil dan `db_shibuya_K36.request_logs` tersedia.
+2. User remote `k36user` dapat mengakses database dari worker Network 4.
+3. IP Gojo `192.229.1.4`, Geto `192.229.4.11`, dan Yaga `192.229.4.17` sesuai alokasi kelompok.
+4. Routing antarjaringan aktif dan setiap worker memiliki alamat IPv4 yang benar.
+5. Gojo/Geto akan menjadi proxy yang diizinkan oleh ACL. Pengujian end-to-end melalui proxy dilakukan setelah konfigurasi Soal 15–16 tersedia.
+
+### Script per node
+
+| Node     | File script         |
+| -------- | ------------------- |
+| `maki`   | `soal-14-maki.sh`   |
+| `panda`  | `soal-14-panda.sh`  |
+| `nanami` | `soal-14-nanami.sh` |
+| `todo`   | `soal-14-todo.sh`   |
+| `kirara` | `soal-14-kirara.sh` |
+
+Untuk setiap node, salin isi file script yang sesuai ke `/root`. Contoh pada Maki:
+
+```bash
+nano /root/soal-14-maki.sh
+chmod +x /root/soal-14-maki.sh
+/root/soal-14-maki.sh
+```
+
+### Penjelasan script
+
+#### A. Maki dan Panda — frontend
+
+Script melakukan pemeriksaan root/hostname, membuat backup konfigurasi yang ada, memasang Nginx, PHP-FPM, dan `curl`, lalu membuat `/var/www/frontend/index.php`. Halaman PHP menampilkan hostname sistem menggunakan `gethostname()`.
+
+Virtual host menggunakan domain `jujutsu.k-36.com` dan `www.jujutsu.k-36.com`. Aturan Nginx `allow 127.0.0.1`, `allow 192.229.1.4`, dan `deny all` memungkinkan self-test localhost dan trafik dari Gojo, sekaligus menolak sumber lain.
+
+Script kemudian memulai PHP-FPM, menjalankan `nginx -t`, memulai atau me-reload Nginx, dan melakukan self-test melalui localhost. Expected: HTTP 200 dan isi halaman menampilkan `maki` atau `panda` sesuai node.
+
+#### B. Nanami, Todo, dan Kirara — API
+
+Script memasang Nginx, PHP-FPM, `php-mysql`, `curl`, dan `mariadb-client`; lalu membuat `/var/www/api/api.php`. Endpoint `/api` membaca hostname worker, alamat sumber yang terlihat oleh worker, dan path request. Endpoint kemudian memasukkan data ke tabel `request_logs` pada Yaga melalui database `db_shibuya_K36` dan user `k36user`.
+
+Virtual host mengizinkan localhost untuk self-test dan Geto (`192.229.4.11`) untuk trafik API, sedangkan sumber lain ditolak dengan `deny all`. Script memvalidasi sintaks PHP dan konfigurasi Nginx, memeriksa koneksi DB, lalu meminta endpoint lokal `/api`.
+
+Expected saat seluruh dependency tersedia: HTTP 200 dan JSON dengan `status: ok`, hostname worker yang benar, dan `logged: true`. Jika DB tidak dapat dijangkau, API akan melaporkan error dan HTTP 500; periksa Soal 13, grant remote, routing, dan log. Pada Soal 14, `client_ip` mencatat IP sumber yang terlihat worker (biasanya Geto ketika melalui Geto). Penerusan IP asli dikerjakan pada Soal 17.
+
+### Cara cek setiap node
+
+#### Maki
+
+```bash
+hostname
+ip -4 -br addr
+nginx -t
+pgrep -a nginx
+pgrep -af 'php-fpm: master process'
+curl -i -H 'Host: jujutsu.k-36.com' http://127.0.0.1/
+```
+
+Expected: `nginx -t` menampilkan `syntax is ok` dan `test is successful`; self-test memberi HTTP `200 OK` dan HTML menampilkan hostname `maki`.
+
+#### Panda
+
+```bash
+hostname
+ip -4 -br addr
+nginx -t
+curl -i -H 'Host: jujutsu.k-36.com' http://127.0.0.1/
+```
+
+Expected: HTTP `200 OK` dan HTML menampilkan hostname `panda`.
+
+#### Nanami
+
+```bash
+hostname
+ip -4 -br addr
+nginx -t
+php -l /var/www/api/api.php
+MYSQL_PWD='K36_pass' mysql --connect-timeout=3 -h 192.229.4.17 -u k36user db_shibuya_K36 -e 'SELECT 1 AS db_connection;'
+curl -i -H 'Host: jujutsu.k-36.com' http://127.0.0.1/api
+```
+
+Expected: PHP menyatakan `No syntax errors detected`, query DB mengembalikan `1`, dan API mengembalikan HTTP 200 dengan JSON `status: ok`, `worker: nanami`, `logged: true`.
+
+#### Todo dan Kirara
+
+Jalankan pada node masing-masing:
+
+```bash
+hostname
+ip -4 -br addr
+nginx -t
+php -l /var/www/api/api.php
+MYSQL_PWD='K36_pass' mysql --connect-timeout=3 -h 192.229.4.17 -u k36user db_shibuya_K36 -e 'SELECT 1 AS db_connection;'
+curl -i -H 'Host: jujutsu.k-36.com' http://127.0.0.1/api
+```
+
+Expected JSON untuk Todo menampilkan `worker: todo`; untuk Kirara menampilkan `worker: kirara`. Keduanya diharapkan `status: ok` dan `logged: true` jika koneksi database berhasil.
+
+### Uji pembatasan akses
+
+#### A. Catat IP worker
+
+Jalankan `ip -4 -br addr` pada node terkait. Ganti `<IP_MAKI>` dan `<IP_NANAMI>` berikut dengan IP aktual dari Master Sheet, tanpa tanda `< >`:
+
+```bash
+curl -i --max-time 5 -H 'Host: jujutsu.k-36.com' http://<IP_MAKI>/
+curl -i --max-time 5 -H 'Host: jujutsu.k-36.com' http://<IP_NANAMI>/api
+```
+
+Jalankan dari client yang memiliki routing menuju Network 4. Expected jika request mencapai Nginx: `HTTP/1.1 403 Forbidden`. Timeout atau `network unreachable` berarti konektivitas/routing belum benar dan **bukan** bukti ACL berhasil.
+
+#### B. Uji jalur proxy yang diizinkan
+
+Frontend mengizinkan Gojo (`192.229.1.4`); API mengizinkan Geto (`192.229.4.11`). Setelah routing antarjaringan aktif, uji dari node Gojo ke IP Maki/Panda dan dari node Geto ke IP Nanami/Todo/Kirara. Expected dari sumber proxy yang diizinkan: frontend HTTP 200, API HTTP 200 serta JSON sukses.
+
+Pengujian end-to-end melalui domain publik dilakukan setelah Soal 15–16 (Geto load balancer dan Gojo reverse proxy) selesai. Dari client:
+
+```bash
+curl -i -H 'Host: jujutsu.k-36.com' http://192.229.1.4/
+curl -i -H 'Host: jujutsu.k-36.com' http://192.229.1.4/api
+```
+
+Expected setelah konfigurasi proxy tersedia: `/` menampilkan halaman dari Maki/Panda dan `/api` menampilkan JSON dari worker API.
+
+### Bukti request tersimpan di Yaga
+
+Setelah endpoint API merespons sukses, pada Yaga jalankan:
+
+```bash
+mysql db_shibuya_K36 -e "SELECT id,worker,client_ip,request_path,created_at FROM request_logs ORDER BY id DESC LIMIT 10;"
+```
+
+Expected: baris request terbaru muncul di tabel `request_logs`, dengan nilai `worker` sesuai node API yang melayani request.
+
+### Dokumentasi screenshot
+
+#### Frontend Maki
+
+Buktikan `nginx -t`, self-test localhost HTTP 200, dan hostname `maki`.
+
+![1](image/SS14-01a-frontend-maki.png)
+
+#### Frontend Panda
+
+Buktikan self-test localhost HTTP 200 dan hostname `panda`.
+
+![2](image/SS14-01b-frontend-panda.png)
+
+#### API workers
+
+Ambil bukti self-test API pada Nanami, Todo, dan Kirara dengan JSON sukses serta `logged: true`. Bisa berupa tiga hasil terminal yang digabung dalam bagian yang sama.
+
+![3](image/SS14-02-api-workers.png)
+
+#### Request log di Yaga
+
+Buktikan request dari endpoint API benar-benar tersimpan di tabel `request_logs`.
+
+![4](image/SS14-03-request-logs-yaga.png)
+
+#### Akses langsung ditolak
+
+Buktikan client yang tidak diizinkan mendapatkan HTTP 403 ketika mengakses langsung satu frontend worker dan satu API worker. Pastikan hasilnya bukan timeout atau network unreachable.
+
+**[SISIPKAN `img/SS14-04-direct-access-403.png` DI SINI]**
+
+#### Akses melalui proxy
+
+Ambil setelah konfigurasi Soal 15–16 selesai. Bukti harus menunjukkan `/` berhasil melalui Gojo dan `/api` berhasil melalui Geto/Gojo sesuai konfigurasi proxy.
+
+![5](image/SS14-04-direct-access-403.png)
+
+### Analisis
+
+Maki dan Panda menyajikan halaman frontend yang menunjukkan hostname masing-masing. ACL Nginx mengizinkan sumber Gojo dan menolak client lain. Nanami, Todo, dan Kirara menyajikan endpoint `/api` dan mencatat worker, alamat sumber yang terlihat, serta path request ke database Yaga. ACL API mengizinkan Geto sebagai jalur masuk dan localhost untuk self-test.
+
+Jika API menghasilkan HTTP 500 atau `logged: false`, endpoint sudah terpanggil tetapi pencatatan database gagal. Pemeriksaan harus difokuskan pada status Yaga, akses remote user `k36user`, routing worker ke Yaga, serta log API/Nginx.
+
+HTTP 403 saat koneksi mencapai worker membuktikan ACL menolak sumber yang tidak diizinkan. Timeout dan `network unreachable` adalah masalah jaringan, bukan bukti penolakan ACL. Pengujian jalur proxy dilakukan setelah konfigurasi terkait pada Soal 15–16 siap.
+
+### Kesimpulan
+
+Maki dan Panda dikonfigurasi sebagai frontend worker menggunakan Nginx dan PHP-FPM, sedangkan Nanami, Todo, dan Kirara menyediakan API yang mencatat request ke `db_shibuya_K36.request_logs` pada Yaga. Virtual host menggunakan `jujutsu.k-36.com`, dengan ACL yang membatasi frontend hanya untuk Gojo dan API hanya untuk Geto (selain localhost untuk self-test). Keberhasilan akhir dibuktikan melalui self-test, pencatatan database, akses langsung yang ditolak, dan akses melalui proxy yang berhasil setelah konfigurasi proxy terkait tersedia.
