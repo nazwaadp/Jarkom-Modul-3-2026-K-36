@@ -916,3 +916,199 @@ tail -n 30 /var/log/nginx/gojo_access.log
 ### Analisis dan kesimpulan
 
 Gojo menggunakan Nginx sebagai public reverse proxy dengan Path-Based Routing. Request ke `/` diteruskan ke Maki dan Panda menggunakan Round Robin, sedangkan request `/api` diteruskan ke Geto untuk diproses oleh worker API. Hasil pengujian client dan access log digunakan untuk memeriksa jalur request yang aktual. Kesimpulan bahwa konfigurasi berhasil hanya dibuat jika hasil nyata sesuai expected output.
+
+## Soal 17 — Meneruskan dan Memverifikasi IP Client
+
+Komando pusat perlu mengetahui IP asli klien yang mengirimkan request tanpa tertukar dengan IP proxy perantara. Konfigurasikan **gojo** dan **geto** agar meneruskan informasi alamat klien melalui header **`X-Real-IP`** dan **`X-Forwarded-For`**. Pastikan **geto hanya mempercayai informasi alamat klien yang diterima dari proxy terpercaya**, dan skrip API menyimpan alamat klien yang telah diverifikasi ke kolom **`client_ip`** pada tabel **`request_logs`** di database **yaga**. Uji dengan mengirimkan request dari klien Network 2 dan Network 3 ke endpoint **`/api`**, kemudian periksa database untuk memastikan alamat yang tercatat sesuai dengan IP klien asal, bukan IP **gojo** atau **geto**.
+
+### Tujuan
+
+- Meneruskan IP asli client dari Gojo ke Geto menggunakan `X-Real-IP` dan `X-Forwarded-For`.
+- Membatasi kepercayaan terhadap header IP agar hanya informasi dari Gojo (proxy tepercaya) yang digunakan.
+- Menyimpan IP client yang sudah diverifikasi ke `request_logs.client_ip` di database Yaga.
+- Membuktikan IP yang tercatat benar dari client Network 2 dan Network 3.
+
+### Topologi dan IP yang digunakan
+
+| Node             | IP               | Peran                                             |
+| ---------------- | ---------------- | ------------------------------------------------- |
+| Gojo             | `192.229.1.4`    | Public reverse proxy                              |
+| Geto             | `192.229.4.11`   | Internal load balancer / proxy tepercaya bagi API |
+| Nanami           | `192.229.4.14`   | API worker                                        |
+| Todo             | `192.229.4.15`   | API worker                                        |
+| Kirara           | `192.229.4.18`\* | API worker cadangan/kompatibel                    |
+| Yaga             | `192.229.4.17`   | MariaDB Master                                    |
+| Client Network 2 | `192.229.2.x`    | Penguji API                                       |
+| Client Network 3 | `192.229.3.x`    | Penguji API                                       |
+
+### Urutan konfigurasi
+
+Pastikan Soal 13 (database Yaga) dan Soal 14 (API workers) sudah berfungsi. Jalankan script berdasarkan hostname dan urutan berikut:
+
+1. `soal-17-nanami.sh` di node **nanami**.
+2. `soal-17-todo.sh` di node **todo**.
+3. `soal-17-kirara.sh` di node **kirara**.
+4. `soal-17-geto.sh` di node **geto**.
+5. `soal-17-gojo.sh` di node **gojo**.
+
+Pada node tujuan, simpan script yang sesuai di `/root`, misalnya:
+
+```bash
+nano /root/soal-17-nanami.sh
+chmod +x /root/soal-17-nanami.sh
+/root/soal-17-nanami.sh
+```
+
+### Penjelasan konfigurasi
+
+#### 1. Gojo — meneruskan IP client
+
+File: `/etc/nginx/sites-available/gojo`.
+
+Pada request ke `/` dan `/api`, Gojo mengatur header:
+
+```nginx
+proxy_set_header X-Real-IP $remote_addr;
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+```
+
+Nilai `$remote_addr` adalah alamat peer yang benar-benar terhubung ke Gojo. Gojo menulis ulang `X-Real-IP` dengan `$remote_addr` agar client tidak dapat memalsukan nilai yang dipakai untuk verifikasi. `X-Forwarded-For` memakai `$proxy_add_x_forwarded_for` untuk meneruskan rantai header; Geto tetap menggunakan hanya `X-Real-IP` dari peer tepercaya sebagai nilai yang akan disimpan di database. Request `/` diteruskan ke `maki`/`panda`, sedangkan `/api` diteruskan ke Geto.
+
+#### 2. Geto — memercayai hanya Gojo
+
+File: `/etc/nginx/sites-available/api_lb`.
+
+`geo` menandai peer `192.229.1.4/32` sebagai proxy tepercaya. `map` memilih nilai `X-Real-IP` hanya ketika koneksi aktual berasal dari Gojo; untuk peer lain, nilai yang digunakan adalah `$remote_addr`. Geto kemudian mengirim IP yang telah diverifikasi ke API worker.
+
+#### 3. API worker — validasi ulang sebelum insert
+
+File: `/var/www/api/api.php` pada Nanami, Todo, dan Kirara. Script PHP hanya memakai `HTTP_X_REAL_IP` jika `REMOTE_ADDR` (peer koneksi) adalah `192.229.4.11` (Geto) dan header berisi alamat IP yang valid. Selain itu, IP yang digunakan adalah alamat peer. Data yang disimpan mencakup worker, IP client, dan path request.
+
+### Validasi konfigurasi
+
+#### Gojo
+
+```bash
+hostname
+nginx -t
+grep -nE 'server_name|X-Real-IP|X-Forwarded-For|proxy_pass' /etc/nginx/sites-available/gojo
+```
+
+Expected: hostname `gojo`; `nginx -t` menyatakan syntax OK dan test successful; konfigurasi berisi kedua header dan rute ke `geto_lb` serta `frontend_cluster`.
+
+#### Geto
+
+```bash
+hostname
+nginx -t
+grep -nE 'geo|map|192\.229\.1\.4|verified_client_ip|X-Real-IP|X-Forwarded-For|weight=' /etc/nginx/sites-available/api_lb
+```
+
+Expected: syntax OK; IP Gojo `192.229.1.4/32` adalah proxy tepercaya; upstream Nanami dan Todo memakai bobot 3:1; Geto mengirim IP yang telah diverifikasi ke backend.
+
+#### API worker
+
+Pada masing-masing Nanami, Todo, dan Kirara:
+
+```bash
+hostname
+nginx -t
+php -l /var/www/api/api.php
+curl -i -H 'Host: jujutsu.k-36.com' http://127.0.0.1/api
+```
+
+Expected: Nginx valid, PHP tidak memiliki syntax error, dan self-test localhost menghasilkan JSON. Pada self-test localhost, `client_ip` umumnya `127.0.0.1` karena request tidak datang melalui Geto. Jika database berjalan dan user bisa mengakses tabel, hasilnya memuat `"status":"ok"` dan `"logged":true`.
+
+### Pengujian end-to-end dari Network 2 dan Network 3
+
+Lakukan setelah layanan Gojo, Geto, API workers, dan Yaga berjalan serta jaringan client aktif.
+
+#### Client Network 2
+
+Di satu client Network 2, misalnya Zenin (pastikan IP aktualnya terlebih dahulu):
+
+```bash
+hostname
+ip -4 -br addr
+curl -i -H 'Host: jujutsu.k-36.com' http://192.229.1.4/api
+```
+
+Expected: HTTP 200 dan JSON berisi `status: ok`, `logged: true`, `client_ip` sama dengan IPv4 client Network 2, serta `proxy_ip` menunjukkan `192.229.4.11` (Geto).
+
+#### Client Network 3
+
+Di satu client Network 3, misalnya Ino atau Kusakabe:
+
+```bash
+hostname
+ip -4 -br addr
+curl -i -H 'Host: jujutsu.k-36.com' http://192.229.1.4/api
+```
+
+Expected: HTTP 200 dan JSON berisi IP aktual client Network 3 pada `client_ip`; `proxy_ip` menunjukkan Geto. Pastikan client sudah memiliki IP dan gateway sebelum pengujian.
+
+### Verifikasi database di Yaga
+
+Di node **yaga**, jalankan:
+
+```bash
+mysql db_shibuya_K36 -e "SELECT id, worker, client_ip, request_path, created_at FROM request_logs WHERE request_path='/api' ORDER BY id DESC LIMIT 20;"
+```
+
+Expected: record terbaru memperlihatkan IP client Network 2 dan Network 3 pada kolom `client_ip`. Alamat tersebut tidak boleh hanya berupa IP Gojo (`192.229.1.4`) atau Geto (`192.229.4.11`). Untuk menyimpulkan benar, cocokkan setiap baris dengan IP aktual client yang melakukan request.
+
+Opsional, uji perlindungan terhadap header palsu dari client:
+
+```bash
+curl -i -H 'Host: jujutsu.k-36.com' -H 'X-Real-IP: 203.0.113.77' http://192.229.1.4/api
+```
+
+Expected: jika request mencapai API, `client_ip` harus tetap IP aktual client, bukan `203.0.113.77`, karena Gojo menulis ulang header `X-Real-IP` berdasarkan koneksi yang sebenarnya.
+
+### Dokumentasi screenshot
+
+#### Header IP di Gojo
+
+Ambil di Gojo:
+
+```bash
+nginx -t
+grep -nE 'X-Real-IP|X-Forwarded-For|proxy_pass' /etc/nginx/sites-available/gojo
+```
+
+![1](image/SS17-01-header-gojo.png)
+
+Keterangan: konfigurasi Gojo menulis header alamat client ketika meneruskan request ke frontend dan Geto.
+
+#### Proxy tepercaya di Geto
+
+Ambil di Geto:
+
+```bash
+nginx -t
+grep -nE 'geo|map|192\.229\.1\.4|verified_client_ip|X-Real-IP|X-Forwarded-For' /etc/nginx/sites-available/api_lb
+```
+
+![2](image/SS17-02-trusted-proxy-geto.png)
+
+Keterangan: Geto mempercayai nilai `X-Real-IP` hanya dari peer Gojo dan meneruskan alamat yang telah diverifikasi ke API worker.
+
+#### Request API dari Network 2 dan 3
+
+Ambil bukti output `curl` sukses dari masing-masing client. Tampilkan hostname/IP client serta field `client_ip`, `proxy_ip`, dan `logged` pada JSON.
+
+![3](image/SS17-03-client-network2-network3.png)
+
+Keterangan: request API dikirim melalui Gojo dari client Network 2 dan Network 3. JSON menunjukkan alamat client yang diverifikasi dan alamat peer proxy Geto.
+
+#### Bukti database
+
+Ambil di Yaga menggunakan query pada bagian 8.
+
+![4](image/SS17-04-database-client-ip.png)
+
+Keterangan: tabel `request_logs` menunjukkan IP client yang disimpan untuk request `/api`, sehingga hasilnya dapat dibandingkan dengan IP aktual client Network 2 dan Network 3.
+
+### Kesimpulan
+
+Soal 17 berhasil apabila Gojo meneruskan header IP ke Geto, Geto hanya menggunakan `X-Real-IP` dari proxy tepercaya, dan API worker menyimpan IP yang telah diverifikasi ke `request_logs.client_ip` di Yaga. Keberhasilan harus dibuktikan dengan request nyata dari Network 2 dan Network 3 serta kecocokan IP pada respons API dan database.
