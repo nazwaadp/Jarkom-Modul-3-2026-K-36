@@ -621,7 +621,7 @@ Buktikan client yang tidak diizinkan mendapatkan HTTP 403 ketika mengakses langs
 
 Ambil setelah konfigurasi Soal 15–16 selesai. Bukti harus menunjukkan `/` berhasil melalui Gojo dan `/api` berhasil melalui Geto/Gojo sesuai konfigurasi proxy.
 
--
+![6-after-15&16](image/SS14-05-proxy-access-success.png)
 
 ### Analisis
 
