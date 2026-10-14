@@ -788,7 +788,7 @@ Jalankan loop 40 request pada Bagian 6. Pastikan output jumlah worker terlihat.
 
 ![2](image/SS15-02-distribusi-40-request.png)
 
-#### SS15-03 — Access log Geto
+#### Access log Geto
 
 Jalankan:
 
