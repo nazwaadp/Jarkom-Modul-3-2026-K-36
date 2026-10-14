@@ -634,3 +634,178 @@ HTTP 403 saat koneksi mencapai worker membuktikan ACL menolak sumber yang tidak 
 ### Kesimpulan
 
 Maki dan Panda dikonfigurasi sebagai frontend worker menggunakan Nginx dan PHP-FPM, sedangkan Nanami, Todo, dan Kirara menyediakan API yang mencatat request ke `db_shibuya_K36.request_logs` pada Yaga. Virtual host menggunakan `jujutsu.k-36.com`, dengan ACL yang membatasi frontend hanya untuk Gojo dan API hanya untuk Geto (selain localhost untuk self-test). Keberhasilan akhir dibuktikan melalui self-test, pencatatan database, akses langsung yang ditolak, dan akses melalui proxy yang berhasil setelah konfigurasi proxy terkait tersedia.
+
+## Soal 15 — Nginx Internal Load Balancer dengan Weighted Round Robin
+
+Geto bertugas mengendalikan pembagian beban request API di internal Data Center agar server tidak tumbang bersamaan. Konfigurasikan **Nginx pada geto sebagai Load Balancer internal** dengan upstream `api_cluster` yang mengarahkan trafik ke **nanami** dan **todo**. Terapkan algoritma **Weighted Round Robin** dengan bobot **3:1**, di mana nanami menerima porsi beban tiga kali lebih banyak daripada todo. Buktikan distribusi beban ini dengan melakukan loop request berulang kali ke geto dari jaringan lokal Data Center dan periksa rasio responsnya.
+
+### Tujuan
+
+- Mengonfigurasi Nginx pada Geto sebagai internal load balancer.
+- Mengarahkan request ke worker API Nanami dan Todo melalui upstream `api_cluster`.
+- Menerapkan Weighted Round Robin dengan bobot Nanami:Todo sebesar 3:1.
+- Menguji banyak request ke Geto dan menghitung worker yang melayani request.
+- Memeriksa access log Geto untuk memastikan distribusi request benar-benar menuju kedua upstream.
+
+### Informasi node
+
+| Komponen               | Hostname | IP yang digunakan script |
+| ---------------------- | -------- | ------------------------ |
+| Internal load balancer | `geto`   | `192.229.4.11`           |
+| API worker utama 1     | `nanami` | `192.229.4.14`           |
+| API worker utama 2     | `todo`   | `192.229.4.15`           |
+| Domain Host header     | —        | `jujutsu.k-36.com`       |
+
+### Konfigurasi dan cara menjalankan
+
+Simpan script di `/root/soal-15.sh` pada node **Geto**. Cara membuat file:
+
+```bash
+nano /root/soal-15.sh
+```
+
+Tempel isi script `soal-15.sh`, simpan dengan `Ctrl+O`, tekan `Enter`, lalu keluar menggunakan `Ctrl+X`. Setelah itu jalankan:
+
+```bash
+chmod +x /root/soal-15.sh
+/root/soal-15.sh
+```
+
+Script memeriksa hostname dan IP Geto, memasang Nginx serta curl jika belum tersedia, membuat backup konfigurasi `api_lb` sebelumnya, menyiapkan upstream dan access log, memvalidasi konfigurasi dengan `nginx -t`, lalu menjalankan Nginx.
+
+Konfigurasi inti upstream:
+
+```nginx
+upstream api_cluster {
+    server 192.229.4.14:80 weight=3;
+    server 192.229.4.15:80 weight=1;
+}
+```
+
+- `192.229.4.14 weight=3` membuat Nanami menerima bobot tiga.
+- `192.229.4.15 weight=1` membuat Todo menerima bobot satu.
+- `proxy_pass http://api_cluster;` meneruskan request ke kumpulan worker tersebut.
+- Nginx menggunakan Weighted Round Robin secara default jika metode balancing lain tidak ditentukan.
+- Log `/var/log/nginx/geto_lb.log` menyimpan alamat upstream untuk setiap request.
+
+Script juga melakukan self-test 40 request menuju `http://127.0.0.1/api`, lalu menghitung HTTP status dan nama worker pada JSON respons. Pastikan Nanami dan Todo sudah aktif serta endpoint API masing-masing sudah lolos pengujian Soal 14 sebelum menjalankan pengujian distribusi.
+
+### Pemeriksaan konfigurasi
+
+Di Geto, jalankan:
+
+```bash
+hostname
+nginx -t
+cat /etc/nginx/sites-available/api_lb
+```
+
+Expected:
+
+- `hostname` menghasilkan `geto`.
+- `nginx -t` menampilkan `syntax is ok` dan `test is successful`.
+- Konfigurasi memperlihatkan upstream `api_cluster` dengan `weight=3` untuk Nanami dan `weight=1` untuk Todo.
+
+Periksa juga proses Nginx:
+
+```bash
+pgrep -a nginx
+```
+
+### Pengujian distribusi beban
+
+Jalankan dari Geto setelah konfigurasi aktif:
+
+```bash
+for i in $(seq 1 40); do
+    curl -sS --connect-timeout 3 --max-time 8 \
+      -H 'Host: jujutsu.k-36.com' http://127.0.0.1/api
+    echo
+done | grep -oE '"worker":"(nanami|todo)"' | sort | uniq -c
+```
+
+Expected output ideal untuk 40 request yang seluruhnya berhasil:
+
+```text
+     30 "worker":"nanami"
+     10 "worker":"todo"
+```
+
+Ini merepresentasikan rasio 3:1 (sekitar 75% request ke Nanami dan 25% ke Todo). Catat hasil aktual. Jika angkanya berbeda, jangan langsung mengklaim distribusi sesuai; periksa apakah ada request gagal, respons API bukan JSON sukses, atau salah satu worker tidak tersedia.
+
+Untuk melihat status HTTP dan respons worker secara jelas, jalankan:
+
+```bash
+for i in $(seq 1 10); do
+    curl -sS -o /tmp/geto-api.out -w 'HTTP %{http_code}\n' \
+      -H 'Host: jujutsu.k-36.com' http://127.0.0.1/api
+    cat /tmp/geto-api.out
+    echo
+done
+```
+
+Expected: masing-masing request sukses dengan HTTP `200`, serta JSON menampilkan `"status":"ok"`, nama worker (`nanami` atau `todo`), dan `"logged":true` jika pencatatan ke database Yaga berhasil.
+
+### Pemeriksaan access log
+
+Setelah loop request, jalankan di Geto:
+
+```bash
+tail -n 20 /var/log/nginx/geto_lb.log
+```
+
+Expected: baris log menampilkan request `/api`, status HTTP, dan `upstream=192.229.4.14:80` atau `upstream=192.229.4.15:80`.
+
+Hitung jumlah request pada log yang mengarah ke setiap worker:
+
+```bash
+grep -c 'upstream=192.229.4.14:80' /var/log/nginx/geto_lb.log
+grep -c 'upstream=192.229.4.15:80' /var/log/nginx/geto_lb.log
+```
+
+Perintah `grep -c` menghitung semua baris yang cocok di file log, bukan hanya pengujian terakhir. Jika ingin menghitung percobaan tertentu saja, bersihkan atau salin log terlebih dahulu sebelum loop pengujian baru, atau gunakan file log terpisah untuk pengujian tersebut.
+
+### Dokumentasi screenshot
+
+#### Validasi dan konfigurasi upstream
+
+Jalankan di Geto:
+
+```bash
+clear
+hostname
+nginx -t
+grep -A5 -B1 'upstream api_cluster' /etc/nginx/sites-available/api_lb
+```
+
+Expected: hostname `geto`, validasi Nginx sukses, dan konfigurasi menampilkan Nanami `weight=3` serta Todo `weight=1`.
+
+![1](image/SS15-01-validasi-upstream-geto.png)
+
+#### Distribusi 40 request
+
+Jalankan loop 40 request pada Bagian 6. Pastikan output jumlah worker terlihat.
+
+![2](image/SS15-02-distribusi-40-request.png)
+
+#### SS15-03 — Access log Geto
+
+Jalankan:
+
+```bash
+ tail -n 20 /var/log/nginx/geto_lb.log
+```
+
+Expected: log menunjukkan alamat upstream Nanami dan Todo, request `/api`, serta status HTTP.
+
+![3](image/SS15-03-access-log-geto.png)
+
+### Analisis hasil
+
+Weighted Round Robin membagikan request berdasarkan bobot yang ditetapkan. Dengan bobot Nanami 3 dan Todo 1, proporsi teoritisnya adalah 3/4 atau 75% untuk Nanami dan 1/4 atau 25% untuk Todo. Untuk 40 request sukses, distribusi idealnya adalah 30 request ke Nanami dan 10 request ke Todo.
+
+Respons JSON dari worker membuktikan node yang melayani tiap request, sedangkan access log Geto memperlihatkan alamat upstream yang dipilih Nginx. Kedua bukti tersebut perlu konsisten. Jika jumlah request sukses kurang dari 40 atau salah satu worker gagal, hasil aktual harus dilaporkan apa adanya dan kendalanya dianalisis.
+
+### Kesimpulan
+
+Nginx pada Geto dikonfigurasi sebagai internal load balancer menggunakan upstream `api_cluster`. Bobot Nanami dan Todo diatur 3:1 dengan metode Weighted Round Robin. Keberhasilan diuji melalui validasi Nginx, loop 40 request dari Geto, pemeriksaan JSON worker, dan access log upstream. Load balancing dapat dinyatakan sesuai rancangan apabila kedua worker menerima request dan distribusi aktual mendekati rasio bobot 3:1 tanpa kegagalan request yang tidak terjelaskan.
