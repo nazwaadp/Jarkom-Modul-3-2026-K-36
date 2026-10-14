@@ -1112,3 +1112,117 @@ Keterangan: tabel `request_logs` menunjukkan IP client yang disimpan untuk reque
 ### Kesimpulan
 
 Soal 17 berhasil apabila Gojo meneruskan header IP ke Geto, Geto hanya menggunakan `X-Real-IP` dari proxy tepercaya, dan API worker menyimpan IP yang telah diverifikasi ke `request_logs.client_ip` di Yaga. Keberhasilan harus dibuktikan dengan request nyata dari Network 2 dan Network 3 serta kecocokan IP pada respons API dan database.
+
+
+## Soal 18 — Health Check dan Backup API
+
+**nanami** dan **todo** merupakan worker API utama, sedangkan **kirara** disiapkan sebagai worker cadangan. Konfigurasikan upstream **api\_cluster** pada **geto** agar **kirara** menjadi server backup, serta terapkan passive health check dengan parameter **max\_fails=2** dan **fail\_timeout=5s** pada worker API utama. Pastikan **kirara** menjalankan layanan API yang kompatibel dengan endpoint utama. Simulasikan gangguan dengan menghentikan layanan Nginx atau layanan API pada **nanami** dan **todo**. Buktikan dari klien bahwa request ke **/api** dialihkan ke **kirara** dan menghasilkan respons API yang valid tanpa error **502 Bad Gateway.**
+
+### Tujuan
+
+Pada Soal 18, konfigurasi Load Balancer Geto dikembangkan dengan mekanisme passive health check. Worker Nanami dan Todo tetap menjadi server utama dengan bobot `3:1`, sedangkan Kirara digunakan sebagai server `backup`.
+
+Jika worker utama mengalami kegagalan, Nginx akan mencoba upstream berikutnya. Apabila seluruh worker utama tidak tersedia, request akan diteruskan ke Kirara sebagai backup.
+
+**Domain:** `jujutsu.k-36.com`
+
+
+#### 1. Konfigurasi Health Check dan Backup pada Geto
+
+Konfigurasi pada Geto menggunakan:
+
+- Nanami: `192.229.4.14`, weight `3`
+- Todo: `192.229.4.15`, weight `1`
+- Kirara: `192.229.4.16`, sebagai `backup`
+- `max_fails=2`
+- `fail_timeout=5s`
+- `proxy_next_upstream` untuk mencoba upstream berikutnya.
+
+Validasi dilakukan dengan:
+
+```bash
+nginx -t
+
+grep -nE 'upstream|192\.229\.4\.14|192\.229\.4\.15|192\.229\.4\.16|max_fails|fail_timeout|backup|proxy_next_upstream' \
+/etc/nginx/sites-available/api_lb
+```
+
+![1](image/SS18-01-healthcheck-geto.png)
+
+**Keterangan:**  
+Screenshot menunjukkan konfigurasi Load Balancer Geto berhasil divalidasi. Nanami dan Todo digunakan sebagai upstream utama dengan passive health check, sedangkan Kirara dikonfigurasi sebagai server `backup`.
+
+#### 2. Pengujian Failover Nanami ke Todo
+
+Nginx pada Nanami dihentikan untuk mensimulasikan kegagalan worker:
+
+```bash
+service nginx stop
+```
+
+Kemudian request API dikirim berulang kali dari Geto:
+
+```bash
+for i in $(seq 1 10); do
+    echo -n "Request $i: "
+    curl -sS --connect-timeout 3 --max-time 5 \
+      -H 'Host: jujutsu.k-36.com' \
+      http://127.0.0.1/api
+    echo
+done
+```
+
+![2](image/SS18-02-failover-todo.png)
+
+**Keterangan:**  
+Screenshot menunjukkan bahwa setelah Nanami tidak tersedia, Geto melakukan failover dan request API tetap dapat dilayani oleh worker Todo.
+
+#### 3. Pengujian Kirara sebagai Backup
+
+Setelah pengujian sebelumnya, Nginx pada Todo juga dihentikan:
+
+```bash
+service nginx stop
+```
+
+Dengan kondisi Nanami dan Todo tidak tersedia, request kembali dikirim dari Geto:
+
+```bash
+for i in $(seq 1 5); do
+    echo -n "Request $i: "
+    curl -sS --connect-timeout 3 --max-time 5 \
+      -H 'Host: jujutsu.k-36.com' \
+      http://127.0.0.1/api
+    echo
+done
+```
+
+Output diharapkan menunjukkan:
+
+```text
+"worker":"kirara"
+```
+
+![3](image/SS18-03-backup-kirara.png)
+
+**Keterangan:**  
+Screenshot menunjukkan bahwa ketika Nanami dan Todo tidak tersedia, Geto berhasil meneruskan request ke Kirara sebagai server `backup`. Dengan demikian layanan API tetap tersedia meskipun seluruh worker utama mengalami kegagalan.
+
+### Kesimpulan
+
+Konfigurasi Soal 18 berhasil menerapkan passive health check pada Load Balancer Geto. Nanami dan Todo digunakan sebagai worker utama dengan bobot `3:1`, sedangkan Kirara berfungsi sebagai backup. Pengujian menunjukkan bahwa request dapat berpindah dari worker yang gagal ke worker utama lainnya dan akhirnya menggunakan Kirara apabila seluruh worker utama tidak tersedia.
+
+### Pemulihan Service
+
+Setelah seluruh pengujian selesai, Nginx pada Nanami dan Todo diaktifkan kembali:
+
+```bash
+service nginx start
+```
+
+Kemudian status service dapat diperiksa dengan:
+
+```bash
+service nginx status
+```
+
