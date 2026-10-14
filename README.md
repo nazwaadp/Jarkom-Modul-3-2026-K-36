@@ -809,3 +809,110 @@ Respons JSON dari worker membuktikan node yang melayani tiap request, sedangkan 
 ### Kesimpulan
 
 Nginx pada Geto dikonfigurasi sebagai internal load balancer menggunakan upstream `api_cluster`. Bobot Nanami dan Todo diatur 3:1 dengan metode Weighted Round Robin. Keberhasilan diuji melalui validasi Nginx, loop 40 request dari Geto, pemeriksaan JSON worker, dan access log upstream. Load balancing dapat dinyatakan sesuai rancangan apabila kedua worker menerima request dan distribusi aktual mendekati rasio bobot 3:1 tanpa kegagalan request yang tidak terjelaskan.
+
+## Soal 16 — Public Reverse Proxy Gojo dengan Path-Based Routing
+
+Gojo berdiri di perbatasan DMZ sebagai gerbang publik tunggal bagi seluruh client dari luar maupun dalam. Konfigurasikan **Nginx** pada **gojo** untuk melayani domain **jujutsu.<xxxx>.com** dan **www.jujutsu.<xxxx>.com** menggunakan metode **Path-Based Routing**. Atur agar request root (`/`) diteruskan secara Round Robin ke worker frontend (maki dan panda), sedangkan request ke path `/api` diteruskan langsung ke geto. Uji dari client Divisi A atau B bahwa akses ke web utama dibalas oleh Maki/Panda, sedangkan akses ke `/api` diteruskan dan dijawab oleh Nanami/Todo.
+
+### Tujuan
+
+- Mengonfigurasi Gojo sebagai public reverse proxy Nginx.
+- Meneruskan request `/` secara Round Robin ke Maki dan Panda.
+- Meneruskan request `/api` ke Geto sebagai internal load balancer.
+- Membuktikan routing melalui pengujian client dan access log Gojo.
+
+### IP dan domain
+
+| Komponen | IP / nilai         |
+| -------- | ------------------ |
+| Domain   | `jujutsu.k-36.com` |
+| Gojo     | `192.229.1.4`      |
+| Maki     | `192.229.4.12`     |
+| Panda    | `192.229.4.13`     |
+| Geto     | `192.229.4.11`     |
+
+### Script dan cara menjalankan
+
+Script dijalankan **hanya di node `gojo`**. Simpan file yang disediakan sebagai `/root/soal-16.sh`:
+
+```bash
+nano /root/soal-16.sh
+```
+
+Salin isi file `soal-16.sh`, lalu simpan (`Ctrl+O`, `Enter`, `Ctrl+X`). Jalankan:
+
+```bash
+chmod +x /root/soal-16.sh
+/root/soal-16.sh
+```
+
+Script memasang Nginx/curl jika belum tersedia, membuat upstream frontend dan Geto, memvalidasi Nginx dengan `nginx -t`, menyalakan atau me-reload Nginx, lalu menjalankan self-test.
+
+### Penjelasan konfigurasi
+
+- `upstream frontend_cluster` berisi Maki (`192.229.4.12`) dan Panda (`192.229.4.13`). Karena tidak diberi bobot khusus, Nginx menggunakan Round Robin secara default.
+- `upstream geto_lb` mengarahkan request API ke Geto (`192.229.4.11`).
+- `location ^~ /api` meneruskan request `/api` ke Geto.
+- `location /` meneruskan request frontend ke `frontend_cluster`.
+- `proxy_set_header Host $host` meneruskan hostname request ke backend.
+- `gojo_access.log` mencatat request, status HTTP, serta upstream yang dipilih.
+
+### Pengujian dan dokumentasi screenshot
+
+#### Validasi konfigurasi Gojo
+
+**Node:** `gojo`
+
+```bash
+clear
+hostname
+nginx -t
+grep -nE 'server_name|upstream frontend_cluster|server 192\.229\.4\.(12|13|11)|location \^~ /api|location /|proxy_pass' /etc/nginx/sites-available/gojo
+```
+
+**Expected output:** hostname `gojo`; `nginx -t` menunjukkan `syntax is ok` dan `test is successful`; konfigurasi memperlihatkan upstream Maki/Panda, upstream Geto, dan dua aturan routing.
+![1](image/SS16-01-validasi-gojo.png)
+
+#### Pengujian routing dari client
+
+**Node:** client Network 2 atau Network 3 yang sudah terhubung.
+
+Jalankan beberapa request frontend untuk melihat Round Robin:
+
+```bash
+for i in 1 2 3 4; do
+  echo "===== FRONTEND REQUEST $i ====="
+  curl -sS --connect-timeout 3 --max-time 10 \
+    -H 'Host: jujutsu.k-36.com' "http://192.229.1.4/?test=$i"
+  echo
+done
+```
+
+Kemudian uji API:
+
+```bash
+curl -i --connect-timeout 3 --max-time 15 \
+  -H 'Host: jujutsu.k-36.com' http://192.229.1.4/api
+```
+
+**Expected output:** request `/` mengembalikan HTTP 200 dan HTML menyebut worker `maki` atau `panda`; request `/api` mengembalikan respons API sukses dengan HTTP 200 dan JSON menyebut worker API (misalnya `nanami` atau `todo`) serta `logged: true`. Jika muncul timeout, `network unreachable`, 403 yang tidak diharapkan, 500, atau 502, jangan menyatakan pengujian berhasil—periksa konektivitas, ACL worker, Geto, serta database.
+
+![2](image/SS16-02-client-path-routing.png)
+
+#### Verifikasi access log Gojo
+
+**Node:** `gojo`
+
+Setelah pengujian client dilakukan, jalankan:
+
+```bash
+tail -n 30 /var/log/nginx/gojo_access.log
+```
+
+**Expected output:** baris log menunjukkan path dan status request serta `ups=` dengan alamat upstream. Request frontend harus diarahkan ke Maki/Panda, sedangkan request `/api` diarahkan ke Geto (`192.229.4.11`).
+
+![3](image/SS16-03-access-log-gojo.png)
+
+### Analisis dan kesimpulan
+
+Gojo menggunakan Nginx sebagai public reverse proxy dengan Path-Based Routing. Request ke `/` diteruskan ke Maki dan Panda menggunakan Round Robin, sedangkan request `/api` diteruskan ke Geto untuk diproses oleh worker API. Hasil pengujian client dan access log digunakan untuk memeriksa jalur request yang aktual. Kesimpulan bahwa konfigurasi berhasil hanya dibuat jika hasil nyata sesuai expected output.
