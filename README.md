@@ -615,13 +615,13 @@ Buktikan request dari endpoint API benar-benar tersimpan di tabel `request_logs`
 
 Buktikan client yang tidak diizinkan mendapatkan HTTP 403 ketika mengakses langsung satu frontend worker dan satu API worker. Pastikan hasilnya bukan timeout atau network unreachable.
 
-**[SISIPKAN `img/SS14-04-direct-access-403.png` DI SINI]**
+![5](image/SS14-04-direct-access-403.png)
 
 #### Akses melalui proxy
 
 Ambil setelah konfigurasi Soal 15–16 selesai. Bukti harus menunjukkan `/` berhasil melalui Gojo dan `/api` berhasil melalui Geto/Gojo sesuai konfigurasi proxy.
 
-![5](image/SS14-04-direct-access-403.png)
+-
 
 ### Analisis
 
