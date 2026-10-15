@@ -556,8 +556,8 @@ Expected JSON untuk Todo menampilkan `worker: todo`; untuk Kirara menampilkan `w
 Jalankan `ip -4 -br addr` pada node terkait. Ganti `<IP_MAKI>` dan `<IP_NANAMI>` berikut dengan IP aktual dari Master Sheet, tanpa tanda `< >`:
 
 ```bash
-curl -i --max-time 5 -H 'Host: jujutsu.k-36.com' http://<IP_MAKI>/
-curl -i --max-time 5 -H 'Host: jujutsu.k-36.com' http://<IP_NANAMI>/api
+curl -i --max-time 5 -H 'Host: jujutsu.k-36.com' http://192.229.4.12/
+curl -i --max-time 5 -H 'Host: jujutsu.k-36.com' http://192.229.4.14/api
 ```
 
 Jalankan dari client yang memiliki routing menuju Network 4. Expected jika request mencapai Nginx: `HTTP/1.1 403 Forbidden`. Timeout atau `network unreachable` berarti konektivitas/routing belum benar dan **bukan** bukti ACL berhasil.
