@@ -34,6 +34,12 @@ subnet 192.229.3.0 netmask 255.255.255.0 {
 }
 EOF
 
+# masukkan ke tiap client untuk config tiap client
+cat <<EOF > /etc/network/interfaces
+auto eth0
+iface eth0 inet dhcp
+EOF
+
 touch /var/lib/dhcp/dhcpd.leases
 dhcpd -t -cf /etc/dhcp/dhcpd.conf
 service isc-dhcp-server restart
