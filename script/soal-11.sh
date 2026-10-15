@@ -30,9 +30,9 @@ EOF
 
 echo "[4/6] Deklarasi zona MASTER + allow-transfer ke shoko"
 cat > /etc/bind/named.conf.local <<'EOF'
-zone "jujutsu.K36.com" {
+zone "jujutsu.k-36.com" {
     type master;
-    file "/etc/bind/jujutsu/db.jujutsu.K36.com";
+    file "/etc/bind/jujutsu/db.jujutsu.k-36.com";
     allow-transfer { 192.229.1.3; };
     also-notify { 192.229.1.3; };
     notify yes;
@@ -40,17 +40,17 @@ zone "jujutsu.K36.com" {
 EOF
 
 echo "[5/6] Buat file zona (SOA + NS untuk kedua server)"
-cat > /etc/bind/jujutsu/db.jujutsu.K36.com <<'EOF'
+cat > /etc/bind/jujutsu/db.jujutsu.k-36.com <<'EOF'
 $TTL    604800
-@       IN      SOA     ns1.jujutsu.K36.com. admin.jujutsu.K36.com. (
+@       IN      SOA     ns1.jujutsu.k-36.com. admin.jujutsu.k-36.com. (
                         2026101401      ; Serial (YYYYMMDDNN) - NAIKKAN tiap ubah zona
                         604800          ; Refresh
                         86400           ; Retry
                         2419200         ; Expire
                         604800 )        ; Negative Cache TTL
 ; --- Name Server ---
-@       IN      NS      ns1.jujutsu.K36.com.
-@       IN      NS      ns2.jujutsu.K36.com.
+@       IN      NS      ns1.jujutsu.k-36.com.
+@       IN      NS      ns2.jujutsu.k-36.com.
 ; --- Glue record untuk NS ---
 ns1     IN      A       192.229.1.2
 ns2     IN      A       192.229.1.3
@@ -58,13 +58,13 @@ EOF
 
 echo "[6/6] Validasi & jalankan named"
 named-checkconf || exit 1
-named-checkzone jujutsu.K36.com /etc/bind/jujutsu/db.jujutsu.K36.com || exit 1
+named-checkzone jujutsu.k-36.com /etc/bind/jujutsu/db.jujutsu.k-36.com || exit 1
 service named restart 2>/dev/null || service bind9 restart 2>/dev/null || { pkill named; sleep 1; named -u bind; }
 sleep 2
 
 echo "=== Self test ==="
-dig @127.0.0.1 jujutsu.K36.com SOA +short
-dig @127.0.0.1 jujutsu.K36.com NS +short
+dig @127.0.0.1 jujutsu.k-36.com SOA +short
+dig @127.0.0.1 jujutsu.k-36.com NS +short
 
 #!/bin/bash
 # Soal 11 - shoko (DNS SLAVE)
@@ -97,10 +97,10 @@ EOF
 
 echo "[4/5] Deklarasi zona SLAVE (masters = utahime)"
 cat > /etc/bind/named.conf.local <<'EOF'
-zone "jujutsu.K36.com" {
+zone "jujutsu.k-36.com" {
     type slave;
     masters { 192.229.1.2; };
-    file "/var/cache/bind/db.jujutsu.K36.com";
+    file "/var/cache/bind/db.jujutsu.k-36.com";
 };
 EOF
 
@@ -111,5 +111,5 @@ sleep 4
 
 echo "=== Self test (zona harus sudah tersinkron dari master) ==="
 ls -l /var/cache/bind/
-dig @127.0.0.1 jujutsu.K36.com SOA +short
-dig @127.0.0.1 jujutsu.K36.com NS +short
+dig @127.0.0.1 jujutsu.k-36.com SOA +short
+dig @127.0.0.1 jujutsu.k-36.com NS +short
