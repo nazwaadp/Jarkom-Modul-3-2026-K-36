@@ -1331,3 +1331,146 @@ Cache reverse proxy mengurangi kebutuhan untuk meminta konten yang sama berulang
 ### Kesimpulan
 
 Gojo dikonfigurasi sebagai reverse proxy frontend dengan cache 10 menit dan header `X-Cache-Status`, serta rate limiting 10 request per detik per IP pada endpoint `/api`. Keberhasilan dibuktikan melalui urutan cache `MISS` kemudian `HIT`, pengujian request API beruntun, dan pemeriksaan access/error log.
+
+## Soal 20 — Benchmark Kapasitas Layanan dan Evaluasi Rate Limiting
+
+Sebelum Curtain di Shibuya resmi dibuka, Kusakabe memimpin audit untuk menguji kapasitas layanan. Dari terminal **kusakabe**, jalankan benchmark menggunakan Apache Benchmark dengan parameter **\-n 600 \-c 30** menuju **http\://jujutsu.\<xxxx\>.com/**. Catat Requests per Second (RPS), latensi, dan jumlah request yang gagal. Lakukan pengujian tambahan pada endpoint **/api** untuk mengamati efek rate limiting. Bandingkan hasil pengujian baseline dengan hasil ketika rate limiting aktif, serta gunakan access log **gojo** untuk membedakan kegagalan aplikasi, koneksi, dan request yang ditolak oleh kebijakan rate limit.
+
+### Tujuan
+
+- Menjalankan Apache Benchmark dari terminal Kusakabe dengan parameter `-n 600 -c 30`.
+- Mencatat Requests per Second (RPS), latensi, dan jumlah request gagal untuk halaman web dan endpoint `/api`.
+- Membandingkan baseline (rate limit nonaktif) dengan kondisi rate limit aktif.
+- Menggunakan access log dan error log Gojo untuk membedakan request yang ditolak rate limit dari kegagalan aplikasi atau koneksi.
+
+### Topologi dan domain
+
+| Komponen       | Keterangan                                      |
+| -------------- | ----------------------------------------------- |
+| Kusakabe       | Client pengujian benchmark                      |
+| Gojo           | Reverse proxy, `192.229.1.4`                    |
+| Domain layanan | `jujutsu.k-36.com`                              |
+| Frontend       | Maki dan Panda melalui Gojo                     |
+| API            | `/api` melalui Gojo menuju Geto dan API workers |
+| Benchmark      | `ab -n 600 -c 30`                               |
+
+### Prasyarat
+
+1. Soal 19 telah diterapkan pada Gojo.
+2. Kusakabe dapat menjangkau Gojo dan domain `jujutsu.k-36.com` diarahkan ke `192.229.1.4`.
+3. Apache Benchmark (`ab`) tersedia di Kusakabe; script akan mencoba memasangnya jika belum ada.
+4. Jalankan toggle rate limit dan analisis log pada Gojo sebagai root.
+
+Jika DNS lab belum menyediakan domain tersebut, tambahkan pemetaan yang sesuai pada `/etc/hosts` Kusakabe:
+
+```bash
+echo '192.229.1.4 jujutsu.k-36.com www.jujutsu.k-36.com' >> /etc/hosts
+```
+
+### Script
+
+Paket ini berisi:
+
+- `soal-20-gojo.sh` — mengaktifkan/menonaktifkan rate limit serta menganalisis log.
+- `soal-20-kusakabe.sh` — menjalankan benchmark web dan API, lalu menyimpan hasil lengkap.
+
+#### 1. Baseline: rate limit OFF
+
+Pada Gojo:
+
+```bash
+chmod +x soal-20-gojo.sh
+bash soal-20-gojo.sh off
+```
+
+Perintah ini menonaktifkan aturan `limit_req` pada `/api`, memvalidasi dan reload Nginx, lalu mengosongkan log agar pengujian baseline mudah dipisahkan.
+
+Pada Kusakabe:
+
+```bash
+chmod +x soal-20-kusakabe.sh
+sh soal-20-kusakabe.sh baseline
+```
+
+Hasil disimpan di:
+
+- `/root/hasil-ab/baseline-web.txt`
+- `/root/hasil-ab/baseline-api.txt`
+
+#### 2. Rate limit ON
+
+Pada Gojo:
+
+```bash
+bash soal-20-gojo.sh on
+```
+
+Rate limit aktif kembali: 10 request/detik per IP, `burst=5`, `nodelay`, dan status penolakan HTTP 429. Log dikosongkan sebelum benchmark berikutnya.
+
+Pada Kusakabe:
+
+```bash
+sh soal-20-kusakabe.sh ratelimit
+```
+
+Hasil disimpan di:
+
+- `/root/hasil-ab/ratelimit-web.txt`
+- `/root/hasil-ab/ratelimit-api.txt`
+
+Script menjalankan benchmark web dan API dengan `ab -l -n 600 -c 30`. Opsi `-l` mengabaikan variasi panjang respons saat membandingkan worker yang mungkin menghasilkan halaman dengan panjang berbeda; opsi ini tidak mengabaikan status HTTP non-2xx.
+
+### Analisis log Gojo
+
+Setelah masing-masing benchmark, jalankan pada Gojo:
+
+```bash
+bash soal-20-gojo.sh analyze
+```
+
+Untuk pemeriksaan manual:
+
+```bash
+grep -E ' status=(429|500|502|504|499) ' /var/log/nginx/gojo_access.log
+grep -E 'limiting requests|connect\\(\\) failed|timed out' /var/log/nginx/gojo_error.log
+```
+
+Interpretasi:
+
+- **HTTP 429**: request ditolak oleh kebijakan rate limit.
+- **HTTP 500**: respons error dari aplikasi/upstream; periksa log worker dan API.
+- **HTTP 502/504**: Gojo tidak mendapat respons upstream yang valid atau upstream timeout.
+- **HTTP 499**: klien menutup koneksi sebelum respons selesai, sebagaimana dicatat Nginx.
+- **Failed requests** dari `ab` bukan selalu sama dengan jumlah 429; periksa `Non-2xx responses` dan access log untuk mengetahui respons yang diterima.
+
+### Dokumentasi screenshot
+
+1. **Baseline benchmark** — output `ab` untuk `/` dan `/api` saat rate limit OFF.
+
+   ![1](image/SS20-01-baseline-ab.png)
+
+2. **Benchmark rate limit aktif** — output `ab` untuk `/` dan `/api` saat rate limit ON.
+
+   ![2](image/SS20-02-ratelimit-ab.png)
+
+3. **Analisis access log Gojo** — jumlah status HTTP, termasuk 429 dan 5xx.
+
+   ![3](image/SS20-03-gojo-access-log.png)
+
+4. **Error log Gojo** — indikasi rate limiting dan masalah koneksi/upstream.
+
+   ![4](image/SS20-04-gojo-error-log.png)
+
+5. **Analisis log Gojo**
+
+   ![5](image/SS20-05-analisis-log-gojo.png)
+
+### Analisis dan perbandingan
+
+Bandingkan empat pengujian dengan melihat RPS, latensi, `Failed requests`, dan `Non-2xx responses`. Baseline menunjukkan perilaku layanan tanpa penolakan rate limit. Saat rate limit aktif, endpoint `/api` dapat menghasilkan HTTP 429 karena beban dari benchmark melampaui batas per IP; RPS yang berhasil, jumlah non-2xx, dan latensi dapat berubah. Halaman `/` tidak memakai aturan rate limit `/api`, sehingga perbedaan pada benchmark web lebih mungkin berkaitan dengan variasi beban, cache, jaringan, atau kondisi upstream.
+
+Gunakan log Gojo untuk memvalidasi penyebabnya. Jangan menyimpulkan semua request gagal sebagai rate limit: 429 adalah penolakan kebijakan, 500 menunjukkan error aplikasi/upstream, sedangkan 502/504/499 dapat menunjukkan masalah koneksi, timeout, atau klien yang terputus.
+
+### Kesimpulan
+
+Apache Benchmark digunakan untuk mengukur kapasitas layanan dengan 600 request dan concurrency 30. Perbandingan baseline dengan rate limit aktif menunjukkan dampak pembatasan pada endpoint `/api`. Kesimpulan akhir harus menyebutkan angka RPS, latensi, request gagal, dan jumlah status 429/5xx berdasarkan hasil eksperimen aktual.
