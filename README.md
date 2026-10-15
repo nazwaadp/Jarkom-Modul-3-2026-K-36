@@ -569,13 +569,12 @@ Sebelum Curtain dibuka kembali, buktikan bahwa proses pemberian alamat berjalan 
 #### A. Menjalankan capture pada tengen
 
 ```bash
-apt-get install -y tcpdump
-tcpdump -i eth0 -n -vvv port 67 or port 68
+tcpdump -i eth0 -n -vvv -l -c 4 port 67 or port 68 | grep -E "BOOTP|DHCP-Message|Gateway-IP|Client-Ethernet-Address|Your-IP|Server-ID|Lease-Time"
 ```
 
-Opsi `-vvv` menampilkan detail field DHCP langsung di terminal.
+Port 67 dan 68 adalah port DHCP server dan client. Opsi `-vvv` menampilkan detail field DHCP, `-c 4` menghentikan capture setelah empat paket, dan `grep` menyaring baris yang dibutuhkan saja. Capture dilakukan pada `eth0` tengen, yaitu jalur menuju Data Center.
 
-#### B. Meminta lease baru dari client
+#### B. Meminta lease baru dari itadori
 
 Pada itadori (Network 2), alamat lama dihapus agar proses dimulai dari awal sehingga keempat paket muncul, bukan hanya perpanjangan lease:
 
@@ -584,28 +583,35 @@ ip addr flush dev eth0
 udhcpc -i eth0
 ```
 
-#### C. Membaca hasil capture
+**Expected:** capture menampilkan empat paket DHCP berurutan, yaitu Discover, Offer, Request, dan ACK, dengan `Gateway-IP` bernilai `192.229.2.1`.
 
-| Informasi pada soal   | Field pada tcpdump | Nilai yang diharapkan |
-| --------------------- | ------------------ | --------------------- |
-| Alamat server         | `Server-ID`        | `192.229.4.10`        |
-| Alamat yang diberikan | `Your-IP`          | `192.229.2.10`        |
-| Lease time            | `Lease-Time`       | `600`                 |
-| giaddr                | `Gateway-IP`       | `192.229.2.1`         |
-
-**Expected:** capture menampilkan empat paket DHCP secara berurutan, yaitu Discover, Offer, Request, dan ACK, dengan `Gateway-IP` bernilai `192.229.2.1`.
-
-![1](image/SS08-01-tcpdump-urutan-dora.png)
-
-![2](image/SS08-02-tcpdump-field-giaddr.png)
+![1](image/8.png)
 
 ### Hasil dan Analisis
 
-Capture menunjukkan proses DORA secara lengkap. Client mengirim DISCOVER, tengen menjawab dengan OFFER berisi alamat yang ditawarkan, client mengirim REQUEST, lalu tengen menutup dengan ACK. Karena client berada di Network 2 dan tengen di Network 4, paket tidak berasal langsung dari client. Paket diteruskan oleh relay pada jichi, yang mengisi `giaddr` dengan alamat interface eth2 (`192.229.2.1`) tempat request diterima. Tengen memakai nilai tersebut untuk memilih scope Network 2 sehingga alamat yang diberikan berada di Pool 1.
+| No  | Paket    | Sumber            | Tujuan            | Isi penting                                                        |
+| --- | -------- | ----------------- | ----------------- | ------------------------------------------------------------------ |
+| 1   | Discover | `192.229.4.1:67`  | `192.229.4.10:67` | `Gateway-IP 192.229.2.1`, MAC client `02:42:17:b9:c8:00`           |
+| 2   | Offer    | `192.229.4.10:67` | `192.229.2.1:67`  | `Your-IP 192.229.2.10`, `Server-ID 192.229.4.10`, `Lease-Time 600` |
+| 3   | Request  | `192.229.4.1:67`  | `192.229.4.10:67` | `Requested-IP 192.229.2.10`, `Server-ID 192.229.4.10`              |
+| 4   | ACK      | `192.229.4.10:67` | `192.229.2.1:67`  | `Your-IP 192.229.2.10`, `Lease-Time 600`                           |
+
+Informasi yang diminta soal:
+
+| Informasi             | Field pada tcpdump | Nilai          |
+| --------------------- | ------------------ | -------------- |
+| Alamat server         | `Server-ID`        | `192.229.4.10` |
+| Alamat yang diberikan | `Your-IP`          | `192.229.2.10` |
+| Lease time            | `Lease-Time`       | `600` detik    |
+| giaddr                | `Gateway-IP`       | `192.229.2.1`  |
+
+Urutan DISCOVER, OFFER, REQUEST, dan ACK muncul lengkap dengan nilai `xid` yang sama pada keempat paket, yang menandakan semuanya milik satu transaksi. Alamat MAC client pada capture, yaitu `02:42:17:b9:c8:00`, adalah milik itadori. Paket client tidak sampai ke tengen secara langsung. Paket Discover dan Request berasal dari `192.229.4.1`, yaitu interface eth4 jichi yang menghadap ke tengen, dengan `hops 1` yang menandakan paket telah melewati satu relay.
+
+Field `giaddr` bernilai `192.229.2.1`, yaitu alamat interface eth2 jichi yang menerima request dari Network 2. Nilai ini sesuai dengan interface jichi untuk subnet client. Tengen memakainya untuk memilih scope `192.229.2.0/24`, sehingga alamat yang ditawarkan berada pada Pool 1. Balasan Offer dan ACK dikirim tengen ke `giaddr` (`192.229.2.1`), lalu diteruskan oleh relay ke client. Paket Offer dan ACK juga memuat subnet mask `255.255.255.0`, gateway `192.229.2.1`, DNS `192.229.1.2` dan `192.229.1.3`, serta broadcast `192.229.2.255`.
 
 ### Kesimpulan
 
-Proses pemberian alamat berjalan sesuai protokol DHCP. Field `giaddr` bernilai `192.229.2.1` sesuai interface jichi yang menerima request dari Network 2.
+Proses pemberian alamat berjalan sesuai protokol DHCP. Itadori memperoleh `192.229.2.10` dari server `192.229.4.10` dengan lease time 600 detik melalui relay pada jichi, dan field `giaddr` bernilai `192.229.2.1` sesuai interface eth2 jichi yang menerima request dari Network 2.
 
 ## Soal 9 - Simulasi Gangguan DHCP Relay
 
