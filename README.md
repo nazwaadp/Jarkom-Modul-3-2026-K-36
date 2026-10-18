@@ -1944,3 +1944,111 @@ Kemudian status service dapat diperiksa dengan:
 ```bash
 service nginx status
 ```
+
+## Soal 19 — Nginx Proxy Caching dan Rate Limiting pada Gojo
+
+**gojo** bertugas mengoptimalkan layanan web sekaligus membatasi request berlebihan. Konfigurasikan Nginx Proxy Caching untuk halaman web frontend dengan masa berlaku cache 10 menit dan tambahkan header **X-Cache-Status**. Terapkan rate limiting pada path **/api** dengan batas 10 request per detik per IP klien. Buktikan bahwa request ke halaman web yang memenuhi syarat cache menghasilkan status **MISS** pada akses awal dan **HIT** pada akses berikutnya. Uji rate limiting secara terpisah dengan mengirimkan request beruntun ke **/api**, kemudian catat status respons yang dihasilkan ketika batas terlampaui.
+
+### Tujuan
+
+- Mengaktifkan Nginx reverse proxy pada Gojo untuk frontend Maki dan Panda.
+- Menyimpan cache respons frontend berstatus HTTP 200 selama 10 menit.
+- Menambahkan header `X-Cache-Status` untuk menunjukkan status cache.
+- Membatasi endpoint `/api` menjadi 10 request per detik per IP klien.
+- Membuktikan cache `MISS` pada akses awal dan `HIT` pada akses berikutnya, serta mengamati respons ketika rate limit terlampaui.
+
+### Topologi dan konfigurasi
+
+| Komponen                     | Konfigurasi                                         |
+| ---------------------------- | --------------------------------------------------- |
+| Gojo                         | Reverse proxy, `192.229.1.4`                        |
+| Frontend upstream            | Maki `192.229.4.12`, Panda `192.229.4.13`           |
+| API upstream                 | Geto `192.229.4.11`                                 |
+| Domain                       | `jujutsu.k-36.com` dan `www.jujutsu.k-36.com`       |
+| Cache                        | Zona `web_cache`, validasi HTTP 200 selama 10 menit |
+| Rate limit                   | `10r/s` per IP, `burst=5`, `nodelay`                |
+| Status saat limit terlampaui | HTTP `429`                                          |
+
+### Prasyarat
+
+1. Soal 14–16 telah diterapkan sesuai topologi: frontend workers Maki/Panda, API/load balancer Geto, dan reverse proxy Gojo.
+2. IP node sesuai topologi dan routing antarnetwork berjalan.
+3. Domain `jujutsu.k-36.com` diarahkan ke Gojo (`192.229.1.4`) dari client yang dipakai untuk pengujian.
+4. Script dijalankan sebagai root pada node Gojo.
+
+### Script dan cara menjalankan
+
+Salin `soal-19.sh` ke Gojo, lalu jalankan:
+
+```bash
+chmod +x soal-19.sh
+bash soal-19.sh
+```
+
+Script memasang Nginx dan curl, membuat cache directory, menulis konfigurasi reverse proxy, mengaktifkan cache frontend, menambahkan header `X-Cache-Status`, mengatur rate limit `/api`, memvalidasi konfigurasi dengan `nginx -t`, lalu reload/start Nginx.
+
+### Pengujian cache MISS dan HIT
+
+Gunakan URL yang sama persis untuk kedua request. Jalankan dari client yang bisa mengakses Gojo:
+
+```bash
+curl -sS -D - -o /dev/null http://jujutsu.k-36.com/
+curl -sS -D - -o /dev/null http://jujutsu.k-36.com/
+```
+
+Expected:
+
+- Request pertama: `X-Cache-Status: MISS`
+- Request kedua: `X-Cache-Status: HIT`
+
+Jika hasil kedua belum `HIT`, pastikan upstream merespons HTTP 200, URL/Host sama, dan respons tidak mengecualikan caching. Cache key menggunakan scheme, host, dan request URI; query string yang berbeda dianggap sebagai cache key berbeda.
+
+### Pengujian rate limiting `/api`
+
+Kirim request berturut-turut dari satu client/IP:
+
+```bash
+for i in $(seq 1 30); do
+  curl -sS -o /dev/null -w "request=$i status=%{http_code}\n" http://jujutsu.k-36.com/api
+done
+```
+
+Expected: request yang masih berada dalam batas diteruskan ke upstream; request yang melampaui kapasitas rate limit dapat menerima HTTP `429 Too Many Requests`. Konfigurasi memakai `burst=5 nodelay`, sehingga beberapa request singkat di atas rata-rata dapat diterima sebagai burst, lalu request selanjutnya ditolak. Hasil persis bergantung pada waktu pengiriman dan respons upstream.
+
+### Pemeriksaan log
+
+Di Gojo:
+
+```bash
+tail -n 30 /var/log/nginx/gojo_access.log
+grep -E ' status=(429|5[0-9][0-9]) ' /var/log/nginx/gojo_access.log
+grep 'limiting requests' /var/log/nginx/gojo_error.log
+```
+
+Access log mencatat status HTTP, upstream, waktu respons, status cache, dan status rate limit. HTTP 429 menunjukkan penolakan rate limit; HTTP 5xx perlu diperiksa lebih lanjut untuk membedakan masalah upstream/aplikasi dari koneksi.
+
+### Dokumentasi screenshot
+
+1. **Konfigurasi dan validasi Nginx** — bukti `nginx -t` sukses.
+
+   ![1](image/SS19-01-nginx-config.png)
+
+2. **Cache MISS lalu HIT** — dua request ke URL yang sama dengan header `X-Cache-Status`.
+
+   ![2](image/SS19-02-cache-miss-hit.png)
+
+3. **Rate limiting `/api`** — request beruntun dan status respons termasuk HTTP 429 bila batas terlampaui.
+
+   ![3](image/SS19-03-api-rate-limit.png)
+
+4. **Log Gojo** — access log/error log yang menunjukkan status cache dan penolakan rate limit.
+
+   ![4](image/SS19-04-gojo-logs.png)
+
+### Analisis
+
+Cache reverse proxy mengurangi kebutuhan untuk meminta konten yang sama berulang kali ke frontend upstream. `MISS` menandakan objek belum tersedia di cache, sedangkan `HIT` menandakan respons disajikan dari cache. Rate limiting diberlakukan pada `/api` berdasarkan IP klien yang terlihat oleh Gojo. Dengan `burst=5 nodelay`, lonjakan kecil masih dapat diterima, tetapi request berlebih akan ditolak dengan status 429.
+
+### Kesimpulan
+
+Gojo dikonfigurasi sebagai reverse proxy frontend dengan cache 10 menit dan header `X-Cache-Status`, serta rate limiting 10 request per detik per IP pada endpoint `/api`. Keberhasilan dibuktikan melalui urutan cache `MISS` kemudian `HIT`, pengujian request API beruntun, dan pemeriksaan access/error log.
