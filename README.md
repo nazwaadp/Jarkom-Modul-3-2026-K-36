@@ -1,13 +1,14 @@
 ﻿# Jarkom-Modul-3-2026-K-36
 
 **Kelompok** : K-36
-
 **Anggota** :
 
 | Nama                    | NRP        |
 | ----------------------- | ---------- |
 | Nazwa Aulia Dwi Purnomo | 5027251018 |
 | Putri Permata Sabila    | 5027251047 |
+
+![topologi](image/topologi.png)
 
 ## Soal 1 - Konektivitas Dasar, IP Forwarding, dan NAT pada Jichi
 
@@ -2197,5 +2198,6 @@ Gunakan log Gojo untuk memvalidasi penyebabnya. Jangan menyimpulkan semua reques
 Apache Benchmark digunakan untuk mengukur kapasitas layanan dengan 600 request dan concurrency 30. Perbandingan baseline dengan rate limit aktif menunjukkan dampak pembatasan pada endpoint `/api`. Kesimpulan akhir harus menyebutkan angka RPS, latensi, request gagal, dan jumlah status 429/5xx berdasarkan hasil eksperimen aktual.
 
 ## Kendala saat mengerjakan keseluruhan soal
+
 - Terdapat banyak client/debinet yang cukup banyak, sehingga membutuhkan ketelitian lebih untuk mengconfigurasi satu per satu
 - Sempat terkendala untuk fitur autorestart pada soal no 10 karena ternyata ada beberapa yang masih berjalan manual pada awalnya
