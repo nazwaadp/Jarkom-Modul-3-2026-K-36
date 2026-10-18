@@ -2195,3 +2195,7 @@ Gunakan log Gojo untuk memvalidasi penyebabnya. Jangan menyimpulkan semua reques
 ### Kesimpulan
 
 Apache Benchmark digunakan untuk mengukur kapasitas layanan dengan 600 request dan concurrency 30. Perbandingan baseline dengan rate limit aktif menunjukkan dampak pembatasan pada endpoint `/api`. Kesimpulan akhir harus menyebutkan angka RPS, latensi, request gagal, dan jumlah status 429/5xx berdasarkan hasil eksperimen aktual.
+
+## Kendala saat mengerjakan keseluruhan soal
+- Terdapat banyak client/debinet yang cukup banyak, sehingga membutuhkan ketelitian lebih untuk mengconfigurasi satu per satu
+- Sempat terkendala untuk fitur autorestart pada soal no 10 karena ternyata ada beberapa yang masih berjalan manual pada awalnya
