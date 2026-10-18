@@ -2201,3 +2201,4 @@ Apache Benchmark digunakan untuk mengukur kapasitas layanan dengan 600 request d
 
 - Terdapat banyak client/debinet yang cukup banyak, sehingga membutuhkan ketelitian lebih untuk mengconfigurasi satu per satu
 - Sempat terkendala untuk fitur autorestart pada soal no 10 karena ternyata ada beberapa yang masih berjalan manual pada awalnya
+- Ada kendala di nomor 11 saat pengecekan ulang yang kedua. Hal ini murni human error karena salah mengecek di node yang salah tepat setelah menaikkan nomor serial. Setelah mencoba untuk perbaikan, akhirnya tidak sinkron dan butuh di reload terus menerus baru bisa sesuai. Selain itu hal ini membuat adanya perbedaan nomor seri dengan yang ada di nomor 12.
